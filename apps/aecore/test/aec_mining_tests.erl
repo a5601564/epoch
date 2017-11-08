@@ -3,6 +3,7 @@
 %%% @doc
 %%%   Unit tests for the aec_mining module
 %%% @end
+%%% @TODO Fix tests following aec_pow:pick_nonce change.
 %%%=============================================================================
 -module(aec_mining_tests).
 
@@ -50,12 +51,12 @@ mine_block_test_() ->
       end,
       [
        {timeout, 60,
-        {"Find a new block (PoW module " ++ atom_to_list(PoWMod) ++ ")",
+        {"Find a new block (PoW module " ++ atom_to_list(PoWMod) ++ ")", %% XXX Move to miner? That is now responsible for nonce range.
          fun() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
                  meck:expect(aec_trees, all_trees_hash, 1, <<>>),
                  meck:expect(aec_chain, top, 0, {ok, #block{target = ?HIGHEST_TARGET_SCI}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 400}),
+                 meck:expect(aec_pow, pick_nonces, 0, {1, 400}), %% TODO Make header deterministic so that can be mined.
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_keys, pubkey, 0, {ok, ?TEST_PUB}),
                  meck:expect(aec_keys, sign, 1,
@@ -69,13 +70,13 @@ mine_block_test_() ->
                  ?assertEqual(1, length(Block#block.txs))
          end}},
        {timeout, 60,
-        {"Proof of work fails with generation_count_exhausted (PoW module " ++
+        {"Proof of work fails with generation_count_exhausted (PoW module " ++ %% XXX Merge this and the one below, mocking PoW to always return no_solution. Then check how many times block_candidate called?
              atom_to_list(PoWMod) ++ ")",
          fun() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
                  meck:expect(aec_trees, all_trees_hash, 1, <<>>),
                  meck:expect(aec_chain, top, 0, {ok, #block{target = ?LOWEST_TARGET_SCI}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 100}),
+                 meck:expect(aec_pow, pick_nonces, 0, {1, 100}), %% TODO Merge this and the one below with no_solution.
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_keys, pubkey, 0, {ok, ?TEST_PUB}),
                  meck:expect(aec_keys, sign, 1,
@@ -93,7 +94,7 @@ mine_block_test_() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
                  meck:expect(aec_trees, all_trees_hash, 1, <<>>),
                  meck:expect(aec_chain, top, 0, {ok, #block{target = ?LOWEST_TARGET_SCI}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 2}),
+                 meck:expect(aec_pow, pick_nonces, 0, {1, 2}), %% TODO Merge this and the one above with no_solution.
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_keys, pubkey, 0, {ok, ?TEST_PUB}),
                  meck:expect(aec_keys, sign, 1,
@@ -105,7 +106,7 @@ mine_block_test_() ->
                               ?TEST_MODULE:mine(BlockCandidate, 10, InitialNonce, MaxNonce))
          end}},
        {timeout, 60,
-        {"For good mining speed mine block with the same difficulty (PoW module " ++
+        {"For good mining speed mine block with the same difficulty (PoW module " ++ %% XXX Mock PoW here, as this is testing difficulty recomputation in aec_mining module.
              atom_to_list(PoWMod) ++ ")",
          fun() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
@@ -152,7 +153,7 @@ mine_block_test_() ->
                  ?assertEqual(1, meck:num_calls(aec_governance, expected_block_mine_rate, 0))
          end}},
        {timeout, 60,
-        {"Too few blocks mined in time increases new block's target threshold (PoW module " ++
+        {"Too few blocks mined in time increases new block's target threshold (PoW module " ++ %% XXX Mock PoW here, as this is testing difficulty recomputation in aec_mining module.
              atom_to_list(PoWMod) ++ ")",
          fun() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
@@ -203,7 +204,7 @@ mine_block_test_() ->
       ]
      } || PoWMod <- PoWModules].
 
-mine_block_from_genesis_test_() ->
+mine_block_from_genesis_test_() -> %% XXX Move to aec_miner - as responsible for nonce range?
     PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
     [{setup,
       fun() ->
