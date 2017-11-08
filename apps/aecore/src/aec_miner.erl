@@ -37,14 +37,9 @@
 
 -define(SERVER, ?MODULE).
 
-%% Cuckoo Cycle has a solution probability of 2.2% so we are
-%% likely to succeed in 100 steps (~90%).
--define(MINING_ATTEPTS_PER_CYCLE, 10).
 -define(FETCH_NEW_TXS_FROM_POOL, true).
 
 -record(state, {block_candidate :: block() | undefined,
-                cycle_attempts_count =
-                    ?MINING_ATTEPTS_PER_CYCLE :: non_neg_integer(),
                 initial_cycle_nonce = 0 :: integer(),
                 max_block_candidate_nonce = 0 :: integer(),
                 fetch_new_txs_from_pool = ?FETCH_NEW_TXS_FROM_POOL:: boolean(),
@@ -138,19 +133,15 @@ post_block(Block) ->
 %% The options are:
 %%  autostart                             :: boolean()
 %%  fetch_new_txs_from_pool_during_mining :: boolean()
-%%  mining_cycle_attempts_count           :: pos_integer()
 %% @end
 %%--------------------------------------------------------------------
 init(Options) ->
     DefaultState = #state{},
-    CycleAttemptsCount =
-        get_option(mining_cycle_attempts_count, DefaultState, Options),
     FetchNewTxsFromPool =
         get_option(fetch_new_txs_from_pool_during_mining, DefaultState, Options),
     AutoStart = get_option(autostart,  DefaultState, Options),
     State =
-        DefaultState#state{cycle_attempts_count = CycleAttemptsCount,
-                           fetch_new_txs_from_pool = FetchNewTxsFromPool,
+        DefaultState#state{fetch_new_txs_from_pool = FetchNewTxsFromPool,
                            autostart = AutoStart
                           },
     AutoStart = start_if_auto(State),
@@ -163,10 +154,6 @@ init(Options) ->
     epoch_mining:info("Miner process initilized ~p~n", [State]),
     Res.
 
-get_option(mining_cycle_attempts_count = Name, State, Options) ->
-    EnvVal = application:get_env(aecore, Name,
-                                 State#state.cycle_attempts_count),
-    option_override(Name, EnvVal, Options);
 get_option(fetch_new_txs_from_pool_during_mining = Name, State, Options) ->
     EnvVal =
         application:get_env(aecore, Name,
@@ -285,11 +272,11 @@ configure(cast, {miner_done, Miner}, #state{ miner = OtherMiner } = State) ->
     {keep_state, State#state{ miner = OtherMiner }};
 configure(cast, create_block_candidate, State) ->
     case aec_mining:create_block_candidate() of
-        {ok, BlockCandidate, InitialNonce, MaxMiningNonce} ->
+        {ok, BlockCandidate, RandomNonce} ->
             {next_state, running,
              State#state{block_candidate = BlockCandidate,
-                         initial_cycle_nonce = InitialNonce,
-                         max_block_candidate_nonce = MaxMiningNonce},
+                         initial_cycle_nonce = aec_pow:next_nonce(RandomNonce),
+                         max_block_candidate_nonce = RandomNonce},
             [mine_event()]};
         {error, key_not_found} ->
             report_suspended(),
@@ -301,9 +288,16 @@ configure(cast, create_block_candidate, State) ->
              [{next_event, cast, create_block_candidate}]}
     end;
 configure(cast, bump_initial_cycle_nonce,
+          #state{fetch_new_txs_from_pool = _,
+                 initial_cycle_nonce = N,
+                 max_block_candidate_nonce = N} = State) ->
+    epoch_mining:info("Failed to mine block, "
+                      "nonce range exhausted; "
+                      "regenerating block candidate."),
+    {keep_state, State, [candidate_event()]};
+configure(cast, bump_initial_cycle_nonce,
           #state{fetch_new_txs_from_pool = true,
                  block_candidate = BlockCandidate,
-                 cycle_attempts_count = CycleAttemptsCount,
                  initial_cycle_nonce = InitialCycleNonce0} = State) ->
     case aec_mining:apply_new_txs(BlockCandidate) of
         {ok, BlockCandidate} ->
@@ -311,18 +305,17 @@ configure(cast, bump_initial_cycle_nonce,
             %% Continue incrementing nonce, without block candidate modifications.
             epoch_mining:info("No new txs available; "
                               "continuing mining with bumped nonce"),
-            InitialCycleNonce =
-                (InitialCycleNonce0 + CycleAttemptsCount) band 16#7fffffff,
+            InitialCycleNonce = aec_pow:next_nonce(InitialCycleNonce0),
             {next_state, running,
              State#state{initial_cycle_nonce = InitialCycleNonce},
              [mine_event()]
             };
-        {ok, NewBlockCandidate, InitialNonce, MaxMiningNonce} ->
+        {ok, NewBlockCandidate, RandomNonce} ->
             epoch_mining:info("New txs added for mining"),
             {next_state, running,
              State#state{block_candidate = NewBlockCandidate,
-                         initial_cycle_nonce = InitialNonce,
-                         max_block_candidate_nonce = MaxMiningNonce},
+                         initial_cycle_nonce = aec_pow:next_nonce(RandomNonce),
+                         max_block_candidate_nonce = RandomNonce},
              [mine_event()]};
         {error, key_not_found} ->
             report_suspended(),
@@ -334,10 +327,9 @@ configure(cast, bump_initial_cycle_nonce,
             [{next_event, cast, bump_initial_cycle_nonce}]}
     end;
 configure(cast, bump_initial_cycle_nonce,
-          #state{initial_cycle_nonce = InitialCycleNonce0,
-                 cycle_attempts_count = CycleAttemptsCount} = State) ->
-    InitialCycleNonce = (InitialCycleNonce0 + CycleAttemptsCount)
-        band 16#7fffffff,
+          #state{fetch_new_txs_from_pool = false,
+                 initial_cycle_nonce = InitialCycleNonce0} = State) ->
+    InitialCycleNonce = aec_pow:next_nonce(InitialCycleNonce0),
     {next_state, running,
      State#state{initial_cycle_nonce = InitialCycleNonce},
      [{next_event, cast, mine}]
@@ -387,14 +379,10 @@ running(cast, create_block_candidate, State) ->
 running(cast, bump_initial_cycle_nonce, State) ->
     {next_state, configure, State, [postpone]};
 running(cast, mine, #state{block_candidate = BlockCandidate,
-                           cycle_attempts_count = CycleAttemptsCount,
                            initial_cycle_nonce = CurrentMiningNonce,
-                           max_block_candidate_nonce = MaxMiningNonce,
                            miner = none}
         = State) ->
-    Miner = mine(BlockCandidate, CycleAttemptsCount,
-                 CurrentMiningNonce, MaxMiningNonce,
-                 State),
+    Miner = mine(BlockCandidate, CurrentMiningNonce, State),
     {keep_state, State#state{ miner = Miner }};
 running(cast, mine, #state{miner = _Other}= State) ->
     %% Already started mining
@@ -488,24 +476,18 @@ callback_mode() ->
 %%% Internal functions
 %%%===================================================================
 
-mine(BlockCandidate, CycleAttemptsCount, CurrentMiningNonce, MaxMiningNonce,
-    State) ->
+mine(BlockCandidate, CurrentMiningNonce, State) ->
     epoch_mining:info("Start mining~n", []),
     %% Run the mining concurrently.
     Miner =
         spawn_link(fun () ->
-                           int_mine(BlockCandidate, CycleAttemptsCount,
-                                    CurrentMiningNonce, MaxMiningNonce,
-                                    State)
+                           int_mine(BlockCandidate, CurrentMiningNonce, State)
                    end),
     epoch_mining:info("Miner ~p~n", [Miner]),
     Miner.
 
-int_mine(BlockCandidate, CycleAttemptsCount,
-         CurrentMiningNonce, MaxMiningNonce,
-         State) ->
-    Res = aec_mining:mine(BlockCandidate, CycleAttemptsCount,
-                          CurrentMiningNonce, MaxMiningNonce),
+int_mine(BlockCandidate, CurrentMiningNonce, State) ->
+    Res = aec_mining:mine(BlockCandidate, CurrentMiningNonce),
     epoch_mining:info("Miner ~p finished with ~p ~n", [self(), Res]),
 
     gen_statem:cast(?SERVER, {miner_done, self()}),
@@ -515,19 +497,13 @@ int_mine(BlockCandidate, CycleAttemptsCount,
                                                        aec_blocks:height(Block)}]),
             ok = save_mined_block(Block),
             start_if_auto(State);
-        {error, generation_count_exhausted} ->
-            try exometer:update([ae,epoch,aecore,mining,retries], 1)
-            catch error:_ -> ok end,
-            epoch_mining:info("Failed to mine block in ~p attempts, retrying.",
-                              [CycleAttemptsCount]),
-            gen_statem:cast(?SERVER, bump_initial_cycle_nonce);
-        {error, nonce_range_exhausted} ->
+        {error, no_solution} ->
             try exometer:update([ae,epoch,aecore,mining,retries], 1)
             catch error:_ -> ok end,
             epoch_mining:info("Failed to mine block, "
-                              "nonce range exhausted; "
-                              "regenerating block candidate"),
-            gen_statem:cast(?SERVER, create_block_candidate)
+                              "no solution; "
+                              "retrying."),
+            gen_statem:cast(?SERVER, bump_initial_cycle_nonce)
     end.
 
 

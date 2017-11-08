@@ -19,21 +19,9 @@ pow_test_() ->
      fun setup/0,
      fun teardown/1,
      begin
-         [{"Fail if retry count is zero",
+         [{"Generate with very high target threshold",
            fun() ->
-                   %% succeeds in a single step
-                   ?assertEqual({error, generation_count_exhausted},
-                                ?TEST_MODULE:generate(<<"hello there">>, ?HIGHEST_TARGET_SCI, 0, 1, 0))
-           end},
-          {"Fail when max nonce is reached",
-           fun() ->
-                   ?assertEqual({error, nonce_range_exhausted},
-                                ?TEST_MODULE:generate(<<"hello there">>, 0, 10, 2, 4))
-           end},
-          {"Generate with very high target threshold",
-           fun() ->
-                   %% succeeds in a single step
-                   {T1, Res} = timer:tc(?TEST_MODULE, generate, [<<"hello there">>, ?HIGHEST_TARGET_SCI, 1, 1, 0]),
+                   {T1, Res} = timer:tc(?TEST_MODULE, generate, [<<"hello there">>, ?HIGHEST_TARGET_SCI, 1]),
                    ?debugFmt("~nReceived result ~p~nin ~p microsecs~n~n", [Res, T1]),
                    ?assertEqual({ok, {1, no_value}}, Res),
 
@@ -42,6 +30,11 @@ pow_test_() ->
                                          [<<"hello there">>, 1, no_value, ?HIGHEST_TARGET_SCI]),
                    ?debugFmt("~nVerified in ~p microsecs~n~n", [T2]),
                    ?assertEqual(true, Res2)
+           end},
+          {"Generate with low target threshold, shall fail",
+           fun() ->
+                   Res = ?TEST_MODULE:generate(<<"hello there">>, 16#01010000, 1),
+                   ?assertEqual({error, no_solution}, Res)
            end}
          ]
      end
