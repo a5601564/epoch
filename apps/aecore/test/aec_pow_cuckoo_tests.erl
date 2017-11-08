@@ -14,24 +14,13 @@
 -define(TEST_MODULE, aec_pow_cuckoo).
 
 pow_test_() ->
-    [{"Fail if retry count is zero",
-      fun() ->
-              ?assertEqual({error, generation_count_exhausted},
-                           ?TEST_MODULE:generate(<<"hello there">>, 5555, 0, 188, 0))
-      end},
-     {"Fail when max nonce is reached",
-      fun() ->
-              ?assertEqual({error, nonce_range_exhausted},
-                           ?TEST_MODULE:generate(<<"hello there">>, 5555, 10, 2, 4))
-      end},
-     {"Generate with a winning nonce and high target threshold, verify it",
+    [{"Generate with a winning nonce and high target threshold, verify it",
       {timeout, 60,
        fun() ->
-               %% succeeds in a single step
                {T1, Res} = timer:tc(?TEST_MODULE, generate,
-                                    [<<"wsffgujnjkqhduihsahswgdf">>, ?HIGHEST_TARGET_SCI, 100, 188, 0]),
+                                    [<<"wsffgujnjkqhduihsahswgdf">>, ?HIGHEST_TARGET_SCI, 188]),
                ?debugFmt("~nReceived result ~p~nin ~p microsecs~n~n", [Res, T1]),
-               ?assertEqual(ok, element(1, Res)),
+               ?assertMatch({ok, {188, _}}, Res),
 
                %% verify the beast
                {ok, {Nonce, Soln}} = Res,
@@ -41,13 +30,11 @@ pow_test_() ->
                ?assertEqual(true, Res2)
        end}
      },
-     {"Generate with a winning nonce but low difficulty, shall fail",
+     {"Generate with a winning nonce but low target threshold, shall fail",
       {timeout, 90,
        fun() ->
-               %% Unlikely to succeed after 2 steps
-               Res = ?TEST_MODULE:generate(<<"wsffgujnjkqhduihsahswgdf">>, 16#01010000, 2, 188, 0),
-               ?debugFmt("Received result ~p~n", [Res]),
-               ?assertEqual({error, generation_count_exhausted}, Res)
+               Res = ?TEST_MODULE:generate(<<"wsffgujnjkqhduihsahswgdf">>, 16#01010000, 188),
+               ?assertEqual({error, no_solution}, Res)
        end}
      }
     ].
