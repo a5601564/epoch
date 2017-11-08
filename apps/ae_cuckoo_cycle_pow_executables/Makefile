@@ -10,7 +10,7 @@ EXECUTABLES = \
 	priv/bin/verify30
 
 REPO = https://github.com/aeternity/cuckoo.git
-COMMIT = 74a2fda
+COMMIT = 488c03f
 
 .PHONY: all
 all: \
