@@ -2,7 +2,7 @@
 %%% @copyright (C) 2017, Aeternity Anstalt
 %%% @doc
 %%%    A library providing Cuckoo Cycle PoW generation and verification.
-%%%    A NIF interface to the C/C++ Cuckoo Cycle implementation of
+%%%    Using (as an independent OS process) the C/C++ Cuckoo Cycle implementation of
 %%%    John Tromp:  https://github.com/tromp/cuckoo
 %%%    White paper: https://github.com/tromp/cuckoo/blob/master/doc/cuckoo.pdf?raw=true
 %%% @end
@@ -18,7 +18,17 @@
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
--define(NIF_NAME, "aec_pow_cuckoo20_nif").
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+-define(CUCKOO_ALGORITHM, mean).
+-define(CUCKOO_GRAPH_SIZE, 30).
+-define(SERVER, ?MODULE).
+
+-ifdef(TEST).
+-define(debug(F, A), ok).
+-define(info(F, A), ?debugFmt(F, A)).
+-define(error(F, A), ?debugFmt(F, A)).
 -else.
 -define(NIF_NAME, "aec_pow_cuckoo28_nif").
 -endif.

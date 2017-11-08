@@ -14,7 +14,20 @@
 -define(TEST_MODULE, aec_pow_cuckoo).
 
 pow_test_() ->
-    [{"Generate with a winning nonce and high target threshold, verify it",
+    {setup,
+     fun() ->
+             meck:new(application, [unstick, passthrough]),
+             meck:expect(application, get_env,
+                         fun(aecore, cuckoo_algorithm) -> mean;
+                            (aecore, cuckoo_graph_size) -> 16;
+                            (App, Key) ->
+                                 meck:passthrough(App, Key)
+                         end)
+     end,
+     fun(_) ->
+             meck:unload(application)
+     end,
+     [{"Generate with a winning nonce and high target threshold, verify it",
       {timeout, 60,
        fun() ->
                {T1, Res} = timer:tc(?TEST_MODULE, generate,
