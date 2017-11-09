@@ -43,7 +43,19 @@ pow_test_() ->
                Target = 16#01010000,
                Nonce = 188,
                Res = ?TEST_MODULE:generate(?TEST_BIN, Target, Nonce),
-               ?assertEqual({error, no_solution}, Res)
+               ?assertEqual({error, no_solution}, Res),
+
+               %% Any attempts to verify such nonce with a solution
+               %% found with high target threshold shall fail.
+               %%
+               %% Obtain solution with high target threshold ...
+               HighTarget = ?HIGHEST_TARGET_SCI,
+               {ok, {Nonce, Soln2}} =
+                   ?TEST_MODULE:generate(?TEST_BIN, HighTarget, Nonce),
+               ?assertMatch(L when length(L) == 42, Soln2),
+               %% ... then attempt to verify such solution (and nonce)
+               %% with the low target threshold (shall fail).
+               ?assertNot(?TEST_MODULE:verify(?TEST_BIN, Nonce, Soln2, Target))
        end}
      }
     ].
