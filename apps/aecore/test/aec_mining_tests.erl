@@ -22,7 +22,8 @@
                     107,188,126,242,98,36,211,79,105,50,16,124,227,93,228,142,83,163,126,167,206>>).
 
 mine_block_test_() ->
-    PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
+    %% XXX PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
+    PoWModules = [aec_pow_sha256],
     [{foreach,
       fun() ->
               application:start(crypto),
@@ -205,7 +206,8 @@ mine_block_test_() ->
      } || PoWMod <- PoWModules].
 
 mine_block_from_genesis_test_() -> %% XXX Move to aec_miner - as responsible for nonce range?
-    PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
+    %% XXX PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
+    PoWModules = [aec_pow_sha256],
     [{setup,
       fun() ->
               meck:new(aec_pow, [passthrough]),
