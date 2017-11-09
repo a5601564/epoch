@@ -18,14 +18,14 @@ pow_test_() ->
      fun() ->
              meck:new(application, [unstick, passthrough]),
              meck:expect(application, get_env, 3,
-                         fun(aecore, cuckoo_miner_executable, _) -> mean16;
-                            (aecore, cuckoo_node_bits, _)        -> 16;
-                            (aecore, cuckoo_extra_opts, _)       -> "-t 5";
+                         fun(aecore, aec_pow_cuckoo, _) -> {mean16, "-t 5", 16};
                             (App, Key, Def) ->
                                  meck:passthrough([App, Key, Def])
-                         end)
+                         end),
+             application:start(erlexec)
      end,
      fun(_) ->
+             application:stop(erlexec),
              meck:validate(application),
              meck:unload(application)
      end,
@@ -49,7 +49,7 @@ pow_test_() ->
      {"Generate with a winning nonce but low target threshold, shall fail",
       {timeout, 90,
        fun() ->
-               Res = ?TEST_MODULE:generate(<<"wsffgujnjkqhduihsahswgdf">>, 16#01010000, 188),
+               Res = ?TEST_MODULE:generate(<<"wsffgujnjkqhduihsahswgdf">>, 16#01010000, 122),
                ?assertEqual({error, no_solution}, Res)
        end}
      }
