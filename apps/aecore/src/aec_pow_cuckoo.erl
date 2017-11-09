@@ -21,9 +21,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--define(DEFAULT_MINER_EXECUTABLE, mean30).
--define(DEFAULT_NODE_BITS, 30).
--define(DEFAULT_EXTRA_OPTS, "-t 5"). %% -m 7 caused crash
+-define(DEFAULT_CUCKOO_ENV, {mean30, "-t 5", 30}). %% -m 7 caused crash
 
 -ifdef(TEST).
 -define(debug(F, A), ok).
@@ -118,28 +116,20 @@ generate_int(Hash, Nonce, Target) ->
                              {'ok', Solution :: pow_cuckoo_solution()} |
                              {'error', term()}.
 generate_single(Hash, Nonce, Target) ->
-    PrivDir = code:priv_dir(ae_cuckoo_cycle_pow_executables),
-    BinDir = filename:join([PrivDir, "bin"]),
-    LibDir = filename:join([PrivDir, "lib"]),
-    ensure_exec_started(),
-    Exe = application:get_env(aecore, cuckoo_miner_executable, ?DEFAULT_MINER_EXECUTABLE),
-    Extra = application:get_env(aecore, cuckoo_extra_options, ?DEFAULT_EXTRA_OPTS),
-    LdPathVar = case os:type() of
-                 {unix, darwin} -> "DYLD_LIBRARY_PATH";
-                 {unix, _}      -> "LD_LIBRARY_PATH"
-                end,
+    BinDir = filename:join([code:priv_dir(ae_cuckoo_cycle_pow_executables), "bin"]),
+    {Exe, Extra, _} = application:get_env(aecore, aec_pow_cuckoo, ?DEFAULT_CUCKOO_ENV),
     %% -s makes mean miner print out the solution. We do not make it
     %% Algo-dependent in order to avoid wiring-in executable names. Lean miner
     %% will complain but ignores it.
-    ?info("Executing cmd: ~p~n", [lists:concat(["./", Exe, " -h ", Hash, " -n ", Nonce, " -s ", Extra])]),
+    ?info("Executing cmd: ~p~n", [lists:concat(export_ld_lib_path() ++ ["./", Exe, " -h ", Hash, " -n ", Nonce, " -s ", Extra])]),
     try exec:run(
-          lists:concat(["export ", LdPathVar, "=", LibDir, "; ./", Exe, " -h ", Hash, " -n ", Nonce, " -s ", Extra]),
+          lists:concat(export_ld_lib_path() ++
+                           ["./", Exe, " -h ", Hash, " -n ", Nonce, " -s ", Extra]),
           [{stdout, self()},
            {stderr, self()},
            {kill_timeout, 1},
            {cd, BinDir},
-           {env, [{"SHELL", "/bin/sh"},
-                  {LdPathVar, LibDir}]},
+           {env, [{"SHELL", "/bin/sh"}]},
            monitor]) of
         {ok, _ErlPid, OsPid} ->
             wait_for_result(#state{os_pid = OsPid,
@@ -159,26 +149,19 @@ generate_single(Hash, Nonce, Target) ->
 -spec verify(Hash :: string(), Nonce :: integer(),
              Soln :: aec_pow:pow_evidence()) -> boolean() | {error, term}.
 verify(Hash, Nonce, Soln) ->
-    PrivDir = code:priv_dir(ae_cuckoo_cycle_pow_executables),
-    BinDir = filename:join([PrivDir, "bin"]),
-    LibDir = filename:join([PrivDir, "lib"]),
-    ensure_exec_started(),
-    LdPathVar = case os:type() of
-                 {unix, darwin} -> "DYLD_LIBRARY_PATH";
-                 {unix, _}      -> "LD_LIBRARY_PATH"
-                end,
-    Size = application:get_env(aecore, cuckoo_node_bits, ?DEFAULT_NODE_BITS),
+    BinDir = filename:join([code:priv_dir(ae_cuckoo_cycle_pow_executables), "bin"]),
+    {_, _, Size} = application:get_env(aecore, aec_pow_cuckoo, ?DEFAULT_CUCKOO_ENV),
     SolnStr = solution_to_hex(Soln),
-    ?info("Executing: ~p~n", [lists:concat(["export ", LdPathVar, "=", LibDir, "; ./verify", Size, " -h ", Hash, " -n ", Nonce])]),
+    ?info("Executing: ~p~n", [lists:concat(export_ld_lib_path() ++ ["./verify", Size, " -h ", Hash, " -n ", Nonce])]),
     try exec:run(
-              lists:concat(["export ", LdPathVar, "=", LibDir, "; ./verify", Size, " -h ", Hash, " -n ", Nonce]),
+              lists:concat(export_ld_lib_path() ++
+                               ["./verify", Size, " -h ", Hash, " -n ", Nonce]),
               [{stdout, self()},
                {stderr, self()},
                stdin,
                {kill_timeout, 1}, %% Kills exe with SIGTERM, then with SIGKILL if needed
                {cd, BinDir},
-               {env, [{"SHELL", "/bin/sh"},
-                      {LdPathVar, LibDir}]},
+               {env, [{"SHELL", "/bin/sh"}]},
                monitor]) of
         {ok, _ErlPid, OsPid} ->
             exec:send(OsPid, list_to_binary(SolnStr)),
@@ -196,6 +179,14 @@ verify(Hash, Nonce, Soln) ->
             C:E ->
             {error, {C, E}}
     end.
+
+export_ld_lib_path() ->
+    LibDir = "../lib",
+    LdPathVar = case os:type() of
+                 {unix, darwin} -> "DYLD_LIBRARY_PATH";
+                 {unix, _}      -> "LD_LIBRARY_PATH"
+                end,
+    ["export ", LdPathVar, "=../lib:$", LdPathVar, "; "].
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -337,8 +328,8 @@ stop_execution(OsPid) ->
 %%------------------------------------------------------------------------------
 -spec get_node_size() -> integer().
 get_node_size() ->
-    case application:get_env(aecore, cuckoo_node_bits, ?DEFAULT_NODE_BITS) of
-        L when L > 33 -> 8;
+    case application:get_env(aecore, aec_pow_cuckoo, ?DEFAULT_CUCKOO_ENV) of
+        {_, _, L} when L > 33 -> 8;
         _ -> 4
     end.
 
@@ -366,16 +357,6 @@ solution_to_binary([], _Bits, Acc) ->
     Acc;
 solution_to_binary([H | T], Bits, Acc) ->
     solution_to_binary(T, Bits, <<Acc/binary, H:Bits>>).
-
-ensure_exec_started() ->
-    case exec:start([]) of
-        {ok, _} ->
-            ok;
-        {error, {already_started, _}} ->
-            ok;
-        {error, _} = Error ->
-            Error
-    end.
 
 -spec solution_to_hex(list(integer())) -> string().
 solution_to_hex(Sol) ->
