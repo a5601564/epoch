@@ -32,7 +32,13 @@ end_per_group(_Grp, _Config) ->
     ok.
 
 init_per_testcase(_TC, Config) ->
+    lager_common_test_backend:bounce(error),
     Config.
 
 end_per_testcase(_TC, _Config) ->
-    ok.
+    case lager_common_test_backend:get_logs() of
+      [] -> ok;
+      _ ->
+        {fail, errors_in_lager_log}
+    end.
+
