@@ -17,23 +17,26 @@ pow_test_() ->
     {setup,
      fun() ->
              meck:new(application, [unstick, passthrough]),
-             meck:expect(application, get_env,
-                         fun(aecore, cuckoo_algorithm) -> mean;
-                            (aecore, cuckoo_graph_size) -> 16;
-                            (App, Key) ->
-                                 meck:passthrough(App, Key)
+             meck:expect(application, get_env, 3,
+                         fun(aecore, cuckoo_miner_executable, _) -> mean16;
+                            (aecore, cuckoo_node_bits, _)        -> 16;
+                            (aecore, cuckoo_extra_opts, _)       -> "-t 5";
+                            (App, Key, Def) ->
+                                 meck:passthrough([App, Key, Def])
                          end)
      end,
      fun(_) ->
+             meck:validate(application),
              meck:unload(application)
      end,
      [{"Generate with a winning nonce and high target threshold, verify it",
-      {timeout, 60,
-       fun() ->
-               {T1, Res} = timer:tc(?TEST_MODULE, generate,
-                                    [<<"wsffgujnjkqhduihsahswgdf">>, ?HIGHEST_TARGET_SCI, 188]),
-               ?debugFmt("~nReceived result ~p~nin ~p microsecs~n~n", [Res, T1]),
-               ?assertMatch({ok, {188, _}}, Res),
+       {timeout, 60,
+        fun() ->
+                %% succeeds in a single step
+                {T1, Res} = timer:tc(?TEST_MODULE, generate,
+                                     [<<"wsffgujnjkqhduihsahswgdf">>, ?HIGHEST_TARGET_SCI, 122]),
+                ?debugFmt("~nReceived result ~p~nin ~p microsecs~n~n", [Res, T1]),
+                ?assertEqual(ok, element(1, Res)),
 
                %% verify the beast
                {ok, {Nonce, Soln}} = Res,
@@ -50,7 +53,8 @@ pow_test_() ->
                ?assertEqual({error, no_solution}, Res)
        end}
      }
-    ].
+     ]
+    }.
 
 misc_test_() ->
     {setup,
