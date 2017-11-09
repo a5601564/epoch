@@ -32,6 +32,7 @@ end_per_group(_Grp, _Config) ->
     ok.
 
 init_per_testcase(_TC, Config) ->
+    lager_common_test_backend:bounce(error),
     Apps = application:which_applications(),
     Names = registered(),
     [{running_apps, Apps},
@@ -42,6 +43,9 @@ end_per_testcase(_TC, Config) ->
     Names0 = ?config(regnames, Config),
     Apps = application:which_applications(),
     Names = registered() -- [cover_server],
-    [] = Apps -- Apps0,
-    [] = Names -- Names0,
-    ok.
+    case {(Apps -- Apps0), Names -- Names0, lager_common_test_backend:get_logs()} of
+      {[], [], []} -> ok;
+      {[], [], _} -> {fail, errors_in_lager_log};
+      {NewApps, [], _} -> {fail, {started_applications, NewApps}};
+      {_, NewReg, _} -> {fail, {registered_processes, NewReg}}
+    end.
