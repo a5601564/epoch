@@ -51,7 +51,7 @@ mine(Block, Nonce) ->
     case Mod:generate(BlockBin, Target, Nonce) of
         {ok, {Nonce, Evd}} ->
             {ok, aec_blocks:set_nonce(Block, Nonce, Evd)};
-        {error, no_solution} = Error ->
+        {error, _} = Error ->
             Error
     end.
 

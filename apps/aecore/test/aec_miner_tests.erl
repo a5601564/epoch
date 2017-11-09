@@ -33,6 +33,7 @@ miner_test_() ->
                          end),
              aec_test_utils:mock_time(),
              ok = application:ensure_started(gproc),
+             ok = application:ensure_started(erlexec),
              TmpKeysDir = aec_test_utils:aec_keys_setup(),
              {ok, _} = aec_tx_pool:start_link(),
              {ok, _} = aec_chain:start_link(aec_block_genesis:genesis_block()),
@@ -44,6 +45,7 @@ miner_test_() ->
              ok = aec_chain:stop(),
              ok = aec_tx_pool:stop(),
              ok = application:stop(gproc),
+             ok = application:stop(erlexec),
              ?assert(meck:validate(aec_governance)),
              meck:unload(aec_governance),
              aec_test_utils:unmock_time(),
@@ -118,7 +120,7 @@ miner_test_() ->
                                   {State, _} = sys:get_state(?TEST_MODULE),
                                   (State =:= idle)
                           end, true),
-                       
+
                         meck:new(aec_chain, [passthrough]),
                         TestPid = self(),
                         meck:expect(

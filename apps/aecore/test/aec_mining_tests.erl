@@ -24,7 +24,12 @@ mine_block_test_() ->
     PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
     [{foreach,
       fun() ->
-              application:start(crypto),
+              meck:new(application, [unstick, passthrough]),
+              meck:expect(application, get_env, 3,
+                          fun(aecore, aec_pow_cuckoo, _) -> {mean16, "-t 5", 16};
+                             (App, Key, Def) ->
+                                  meck:passthrough([App, Key, Def])
+                          end),
               meck:new(aec_blocks, [passthrough]),
               meck:new(aec_chain, [passthrough]),
               meck:new(aec_headers, [passthrough]),
@@ -34,10 +39,15 @@ mine_block_test_() ->
               meck:new(aec_keys,[passthrough]),
               meck:new(aec_trees, [passthrough]),
               meck:expect(aec_pow, pow_module, 0, PoWMod),
+              meck:new(aeu_time, [passthrough]),
+              meck:expect(aeu_time, now_in_msecs, 0, 1510253222889),
+              application:start(crypto),
+              application:start(erlexec),
               {ok, _} = aec_tx_pool:start_link()
       end,
       fun(_) ->
               application:stop(crypto),
+              application:stop(erlexec),
               meck:unload(aec_blocks),
               meck:unload(aec_chain),
               meck:unload(aec_headers),
@@ -46,7 +56,10 @@ mine_block_test_() ->
               meck:unload(aec_governance),
               meck:unload(aec_keys),
               meck:unload(aec_trees),
-              ok = aec_tx_pool:stop()
+              meck:unload(aeu_time),
+              ok = aec_tx_pool:stop(),
+              meck:validate(application),
+              meck:unload(application)
       end,
       [
        {timeout, 60,
@@ -55,54 +68,36 @@ mine_block_test_() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
                  meck:expect(aec_trees, all_trees_hash, 1, <<>>),
                  meck:expect(aec_chain, top, 0, {ok, #block{target = ?HIGHEST_TARGET_SCI}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 400}),
+                 meck:expect(aec_pow, pick_nonce, 0, 10),
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_keys, pubkey, 0, {ok, ?TEST_PUB}),
                  meck:expect(aec_keys, sign, 1,
                              {ok, #signed_tx{data = #coinbase_tx{account = <<"pubkey">>},
                                              signatures = [<<"sig1">>]}}),
 
-                 {ok, BlockCandidate, InitialNonce, MaxNonce} = ?TEST_MODULE:create_block_candidate(),
-                 {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, 400, InitialNonce, MaxNonce),
+                 {ok, BlockCandidate, Nonce} = ?TEST_MODULE:create_block_candidate(),
+                 {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, Nonce),
 
                  ?assertEqual(1, Block#block.height),
                  ?assertEqual(1, length(Block#block.txs))
          end}},
        {timeout, 60,
-        {"Proof of work fails with generation_count_exhausted (PoW module " ++
+        {"Proof of work fails with no_solution (PoW module " ++
              atom_to_list(PoWMod) ++ ")",
          fun() ->
                  Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
                  meck:expect(aec_trees, all_trees_hash, 1, <<>>),
                  meck:expect(aec_chain, top, 0, {ok, #block{target = ?LOWEST_TARGET_SCI}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 100}),
+                 meck:expect(aec_pow, pick_nonce, 0, 67),
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_keys, pubkey, 0, {ok, ?TEST_PUB}),
                  meck:expect(aec_keys, sign, 1,
                              {ok, #signed_tx{data = #coinbase_tx{account = <<"pubkey">>},
                                              signatures = [<<"sig1">>]}}),
 
-                 {ok, BlockCandidate, InitialNonce, MaxNonce} = ?TEST_MODULE:create_block_candidate(),
-                 ?assertEqual({error, generation_count_exhausted},
-                              ?TEST_MODULE:mine(BlockCandidate, 10, InitialNonce, MaxNonce))
-         end}},
-       {timeout, 60,
-        {"Proof of work fails with nonce_range_exhausted (PoW module " ++
-             atom_to_list(PoWMod) ++ ")",
-         fun() ->
-                 Trees = #trees{accounts = [#account{pubkey = <<"pubkey">>}]},
-                 meck:expect(aec_trees, all_trees_hash, 1, <<>>),
-                 meck:expect(aec_chain, top, 0, {ok, #block{target = ?LOWEST_TARGET_SCI}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 2}),
-                 meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
-                 meck:expect(aec_keys, pubkey, 0, {ok, ?TEST_PUB}),
-                 meck:expect(aec_keys, sign, 1,
-                             {ok, #signed_tx{data = #coinbase_tx{account = <<"pubkey">>},
-                                             signatures = [<<"sig1">>]}}),
-
-                 {ok, BlockCandidate, InitialNonce, MaxNonce} = ?TEST_MODULE:create_block_candidate(),
-                 ?assertEqual({error, nonce_range_exhausted},
-                              ?TEST_MODULE:mine(BlockCandidate, 10, InitialNonce, MaxNonce))
+                 {ok, BlockCandidate, Nonce} = ?TEST_MODULE:create_block_candidate(),
+                 ?assertEqual({error, no_solution},
+                              ?TEST_MODULE:mine(BlockCandidate, Nonce))
          end}},
        {timeout, 60,
         {"For good mining speed mine block with the same difficulty (PoW module " ++
@@ -121,7 +116,7 @@ mine_block_test_() ->
                  meck:expect(aec_chain, get_header_by_height, 1,
                              {ok, #header{height = 20,
                                           time = Now - 50000}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 500}),
+                 meck:expect(aec_pow, pick_nonce, 0, 5),
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_governance, recalculate_difficulty_frequency, 0, 10),
                  meck:expect(aec_governance, expected_block_mine_rate, 0, 5),
@@ -130,8 +125,8 @@ mine_block_test_() ->
                              {ok, #signed_tx{data = #coinbase_tx{account = <<"pubkey">>},
                                              signatures = [<<"sig1">>]}}),
 
-                 {ok, BlockCandidate, InitialNonce, MaxNonce} = ?TEST_MODULE:create_block_candidate(),
-                 {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, 400, InitialNonce, MaxNonce),
+                 {ok, BlockCandidate, Nonce} = ?TEST_MODULE:create_block_candidate(),
+                 {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, Nonce),
 
                  ?assertEqual(30, Block#block.height),
                  case PoWMod of
@@ -171,7 +166,7 @@ mine_block_test_() ->
                              {ok, #header{height = 190,
                                           target = Target,
                                           time = Now - 11000}}),
-                 meck:expect(aec_pow, pick_nonces, 0, {1, 500}),
+                 meck:expect(aec_pow, pick_nonce, 0, 98),
                  meck:expect(aec_tx, apply_signed, 3, {ok, Trees}),
                  meck:expect(aec_governance, recalculate_difficulty_frequency, 0, 10),
                  meck:expect(aec_governance, expected_block_mine_rate, 0, 100000),
@@ -180,8 +175,8 @@ mine_block_test_() ->
                              {ok, #signed_tx{data = #coinbase_tx{account = <<"pubkey">>},
                                              signatures = [<<"sig1">>]}}),
 
-                 {ok, BlockCandidate, InitialNonce, MaxNonce} = ?TEST_MODULE:create_block_candidate(),
-                 {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, 400, InitialNonce, MaxNonce),
+                 {ok, BlockCandidate, Nonce} = ?TEST_MODULE:create_block_candidate(),
+                 {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, Nonce),
 
                  ?assertEqual(200, Block#block.height),
                  case PoWMod of
@@ -207,9 +202,20 @@ mine_block_from_genesis_test_() ->
     PoWModules = [aec_pow_sha256, aec_pow_cuckoo],
     [{setup,
       fun() ->
+              meck:new(application, [unstick, passthrough]),
+              meck:expect(application, get_env, 3,
+                          fun(aecore, aec_pow_cuckoo, _) -> {mean16, "-t 5", 16};
+                             (App, Key, Def) ->
+                                  meck:passthrough([App, Key, Def])
+                          end),
               meck:new(aec_pow, [passthrough]),
               meck:expect(aec_pow, pow_module, 0, PoWMod),
-              meck:expect(aec_pow, pick_nonces, 0, {1, 400}),
+              meck:expect(aec_pow, pick_nonce, 0, 22),
+              meck:new(aeu_time, [passthrough]),
+              meck:expect(aeu_time, now_in_msecs, 0, 1510253222889),
+              meck:new(aec_trees, [passthrough]),
+              %%meck:expect(aec_trees, all_trees_hash, 1, <<>>),
+              application:start(erlexec),
               {ok, _} = aec_tx_pool:start_link(),
               TmpKeysDir = aec_test_utils:aec_keys_setup(),
               {ok, _} = aec_chain:start_link(aec_block_genesis:genesis_block()),
@@ -219,8 +225,12 @@ mine_block_from_genesis_test_() ->
               ok = aec_test_utils:aec_keys_cleanup(TmpKeysDir),
               ok = aec_chain:stop(),
               ok = aec_tx_pool:stop(),
+              application:stop(erlexec),
               ?assert(meck:validate(aec_pow)),
               meck:unload(aec_pow),
+              meck:unload(aec_trees),
+              meck:unload(application),
+              meck:unload(aeu_time),
               file:delete(TmpKeysDir)
       end,
       fun(_) ->
@@ -228,8 +238,9 @@ mine_block_from_genesis_test_() ->
                {timeout, 60,
                 {"Find first block after genesis (PoW module " ++ atom_to_list(PoWMod) ++ ")",
                  fun() ->
-                         {ok, BlockCandidate, InitialNonce, MaxNonce} = ?TEST_MODULE:create_block_candidate(),
-                         {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, 400, InitialNonce, MaxNonce),
+                         {ok, BlockCandidate, Nonce} = ?TEST_MODULE:create_block_candidate(),
+                         ?debugFmt("Block candidate: ~p~n", [BlockCandidate]),
+                         {ok, Block} = ?TEST_MODULE:mine(BlockCandidate, Nonce),
                          ?assertEqual(1, aec_blocks:height(Block)),
                          ?assertEqual(1, length(Block#block.txs)),
                          ?assertMatch(<<H:?TXS_HASH_BYTES/unit:8>> when H > 0,
